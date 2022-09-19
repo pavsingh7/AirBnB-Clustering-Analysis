@@ -1,0 +1,1027 @@
+---
+title: "AirBnB Clustering Analysis"
+author: "Pavan Singh"
+date: "2021-10-29"
+output:
+  rmdformats::robobook:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: false
+    highlight: tango
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE, fig.width=10}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+setwd("~/Library/CloudStorage/GoogleDrive-pavansingho23@gmail.com/My Drive/Portfolio/Projects/R/AirBnB Clustering")
+```
+
+
+![](/Users/pavansingh/Library/CloudStorage/GoogleDrive-pavansingho23@gmail.com/My Drive/Portfolio/Projects/R/AirBnB Clustering/airbnb.jpg)
+
+# Preliminary Discssion
+
+AirBnB is a platform, which serves to provide an opportunity to link two groups - hosts and guests. The platform was launched in 2008 and over the past decade has quickly grown into a huge player in the marketplace for lodging, home stays for vacation rentals, and tourism activities. Anybody with an open room or free space can become a host on Airbnb and offer said space to the global community. For the hosts, it is an opportunity for extra income with minimal effort. It is also an easy way to advertise space, due to the high traffic and global user base on the platform
+
+The main methods used in this paper include clustering analysis and self organising maps. Clustering analysis concerns itself with grouping a set of objects in such a way that objects in the same group (called a cluster) are more similar to each other than to those in other groups (clusters). Similarly, self organising maps (SOMs) are a popular tool for clustering - and are particularly useful with high dimensional data. Both these methods are a form of unsupervised learning. Here, unsupervised learning refers to the use of algorithms to identify patterns in data sets containing data points which are not classified nor labelled.
+
+***
+# Aim and Project Goals
+
+The goal of the project is to uncover any trends or hidden relationships from the property listings (data points) in our data set through the use of clustering algorithms. Secondly, we want to use th data set as a basis on which we can apply and compare clustering algorithms. We shall also seek to apply SOMs as a clustering algorithm. 
+
+***
+# Plan of Development
+
+Any analysis starts with knowing your data. We begin by conducting data exploration, to see the types of variables and if they are in appropriate structure. We  also seek to detect any discrepancies/anomalies/missing values in your data set. We then shall use a subset of variables to apply one hierarchical (HC) and one none-hierarchical clustering (NHC) algorithm. Finally, we shall apply self-organizing maps (SOMs). Overall, we shall compare results of the clustering algorithms and SOMs.
+
+***
+# Setup 
+
+We begin by loading the necessary packages for this project. 
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(lubridate)
+library(plyr)
+library(cluster)
+library(plyr)
+library(doParallel)
+library(ggpubr)
+library(reshape2)
+library(DT)
+library(maps)
+library(corrplot)
+library(tidyverse)  # data manipulation
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+```
+
+
+
+***
+# Data Descriptuion & Cleaning
+
+Let's read in the data into our R environment.
+
+```{r}
+load("airbnbListings.RData")
+airbnb <- cpt_listings_in
+```
+
+
+We have a data set which includes 74 variables for 17 016 listings that appear on Airbnb’s website for City of Cape Town (scraped from Airbnb in September 2021). The data set includes a variety of variables with respect to each listing, namely information on the host and property details, as well as other information like location and availability.
+
+Data cleaning is the process of detecting and correcting (or removing) inaccurate records from our data set. We achieved this by checking all our variables and checking any discrepancies in our data set using a combination of summary statistics and plots.
+
+```{r, include=FALSE}
+str(cpt_listings_in)
+```
+
+W used the `str()` function, to look at the types of variables in the data set. We changed the variables reflecting the price, host acceptance rate and host response rate from text to numeric variables. We also changed instant book, fully booked, and super host variables to binary (factor) variables – they were initially numeric. We decided to change these variables as we thought they would be used in the exploratory analysis, if not in the further sections. 
+
+```{r, warning=FALSE, message=FALSE, fig.width=10}
+# HOST RESPONSE RATE TO NUMERIC
+cpt_listings_in$host_response_rate <- as.numeric(gsub("%", "", as.character(cpt_listings_in$host_response_rate)))/100
+
+# HOST ACCEPTANCE TO NUMERIC
+cpt_listings_in$host_acceptance_rate <- as.numeric(gsub("%", "", as.character(cpt_listings_in$host_acceptance_rate)))/100
+
+# CHANGE PRICE TO NUMERIC
+cpt_listings_in$price <-  parse_number(cpt_listings_in$price)
+cpt_listings_in$price <-  as.numeric(cpt_listings_in$price)
+```
+
+The variables reflecting the different types of review scores, for which we are interested in, are listed below:
+
+-  review scores value
+
+- review scores location 
+
+- review scores rating
+
+We noticed that these variables had several missing observation. We opted for imputing these review scores using the median value, instead of removing these observations, since there were over 4000 listings with missing values for these variables. Imputing works by essentially, just calculating the median of the non-missing values in the column and then replacing the missing values with that.
+
+```{r, warning=FALSE, message=FALSE, fig.width=10}
+# Review Variables
+summary(cpt_listings_in[,61:67])
+
+# REPLACE NA IN REVIEWS WITH MEDIAN VALUES
+# review_scores_rating
+cpt_listings_in$review_scores_rating <- replace_na(cpt_listings_in$review_scores_rating, median(cpt_listings_in$review_scores_rating, na.rm = TRUE))
+
+# review_scores_location
+cpt_listings_in$review_scores_location <- replace_na(cpt_listings_in$review_scores_location, median(cpt_listings_in$review_scores_location, na.rm = TRUE))
+
+# review_scores_value
+cpt_listings_in$review_scores_value <- replace_na(cpt_listings_in$review_scores_value, median(cpt_listings_in$review_scores_value, na.rm = TRUE))
+
+```
+
+
+We cleaned several variables, including the price. We also generated bathroom variables, specifying the different sort of bathrooms. 
+
+```{r, warning=FALSE, message=FALSE, fig.width=10}
+cpt_listings_in <- cpt_listings_in %>% 
+  mutate(price_clean = price,
+         price_clean = as.numeric(str_remove_all( price_clean, "\\$|,")),
+         bathrooms_text = replace(bathrooms_text,bathrooms_text == "Half-bath", 0.5),
+         bathrooms_text = replace(bathrooms_text,bathrooms_text == "Shared half-bath", 0.5),
+         bathrooms_text = replace(bathrooms_text,bathrooms_text == "Private half-bath", 0.5),
+         bathrooms_text = str_remove_all(bathrooms_text, "private |shared |s"),
+         bathrooms= as.numeric(str_remove_all(bathrooms_text, " bath")),
+         #clean price - remove dollar and comma
+         haccrclean = host_acceptance_rate,
+         haccrclean = as.numeric(str_remove_all(host_acceptance_rate, "\\%")),
+         hresponserclean = host_response_rate,
+         hresponserclean = as.numeric(str_remove_all(host_response_rate, "\\%"))) %>% 
+  mutate(across(where(is.logical), as.character)) %>%
+  separate(neighbourhood_cleansed, c("Ward ","number")) %>%
+  mutate(WARDNO=as.numeric(number)) %>%
+  mutate(fullyBooked = availability_365==0)
+```
+
+We also decided to create dummy variables for room types, property types, and other categorical variables. 
+
+```{r, message=FALSE, warning=FALSE}
+# VARIABLE GENERATION (DUMMY)
+cpt_listings_in = cpt_listings_in%>%mutate(var = 1) %>% 
+  spread(room_type, var, fill = 0, sep = "_") %>% 
+  left_join(cpt_listings_in) %>% 
+  dplyr::select(everything()) 
+
+cpt_listings_in = cpt_listings_in%>%mutate(var = 1) %>% 
+  spread(property_type, var, fill = 0, sep = "_") %>% 
+  left_join(cpt_listings_in) %>% 
+  dplyr::select(everything()) 
+
+cpt_listings_in = cpt_listings_in%>%mutate(var = 1) %>% 
+  spread(instant_bookable, var, fill = 0, sep = "_") %>% 
+  left_join(cpt_listings_in) %>% 
+  dplyr::select(everything()) 
+
+cpt_listings_in = cpt_listings_in%>%mutate(var = 1) %>% 
+  spread(fullyBooked, var, fill = 0, sep = "_") %>% 
+  left_join(cpt_listings_in) %>% 
+  dplyr::select(everything()) 
+
+cpt_listings_in = cpt_listings_in%>%mutate(var = 1) %>% 
+  spread(host_is_superhost, var, fill = 0, sep = "_") %>% 
+  left_join(cpt_listings_in) %>% 
+  dplyr::select(everything())
+```
+
+
+The data set contained several outliers. The identification of erratic values (outliers), is an important procedure prior to conducting our analysis. These values can have negative effects in our studies, as these extreme values will severely inflate estimated values and/or can lead to spurious results. We picked up these outliers from using a combination of box plots and summary statistics for the variables. With respect to the variables bedrooms and beds, we were able to identify several outliers which could have been incorrectly recorded. Some of these observations were in fact valid, while others were not. 
+
+
+```{r, warning=FALSE, message=FALSE, fig.width=10}
+#REMOVAL OF OUTLIERS - bedrooms and accommodates
+boxplot(cpt_listings_in$bedrooms)
+useForCleaning <- c(1,32,33,35,36,38)
+datatable(floor(cpt_listings_in[which(cpt_listings_in$bedrooms>15),useForCleaning])) #SEVERAL OUTLIERS
+```
+
+Above is an extract of listings who have greater than 15 bedrooms. The listings which accommodate 3 or less tenants, have large values for beds and bedrooms. We also checked whether the listing name and description reflected the recorded information. We opted for removing these (3) observations from the data set, as they were incorrectly entered.
+
+```{r, include=FALSE}
+cpt_listings_in[which(cpt_listings_in$bedrooms>15 & cpt_listings_in$accommodates <10),useForCleaning] #SEVERAL OUTLIERS
+cpt_listings_in <- cpt_listings_in[-which(cpt_listings_in$bedrooms>15 & cpt_listings_in$accommodates <10),] #REMOVED 3 OBS
+```
+
+Similarity we had observations who had many beds and bathrooms available for ”private room” listings, but only accommodated 2 tenants. We decided to remove these 2 observations as well. A possible explanation is that these listings are advertised from guest houses where there are many beds or bedrooms. The hosts may have mistakenly entered the total number of beds/bedrooms in the guest house, and not the actual number that the guests will be getting for the specific listing being advertised.
+
+
+```{r, include=FALSE}
+#REMOVAL OF OUTLIERS - beds and accommodates
+boxplot(cpt_listings_in$beds)
+cpt_listings_in[which(cpt_listings_in$beds>20),useForCleaning]  #SEVERAL OUTLIERS
+cpt_listings_in[which(cpt_listings_in$beds>20 & cpt_listings_in$accommodates<10),useForCleaning]
+cpt_listings_in <-  cpt_listings_in[-which(cpt_listings_in$beds>20 & cpt_listings_in$accommodates<10),]  #REMOVED 2 OBS
+cpt_listings_in[which(cpt_listings_in$beds>30 & cpt_listings_in$bedrooms==5),useForCleaning] #CAN KEEP
+
+cpt_listings_in[which(cpt_listings_in$beds>40),useForCleaning]
+cpt_listings_in <-  cpt_listings_in[-which(cpt_listings_in$beds>40),]  #REMOVED 1 OBS
+
+```
+
+In addition, we had 1180 listings with missing data for bedrooms, which we decided to remove. We also, identified properties with bed values equal to 0, but these listings also recorded that they accommodated many people and had serial bedrooms recorded as well. So, we proceeded by imputing the variable beds to equal the number of bedrooms for the listings which had 0 beds but several bedrooms.
+
+```{r}
+#MAKE PLACES WITH 0 BEDS, BUT  X BEDROOMS, HAVE X BEDS
+datatable(cpt_listings_in[which(cpt_listings_in$beds == 0),useForCleaning]) #SEVERAL 0 observations
+index <-  which(cpt_listings_in$beds==0)
+for (i in seq(length(index))){
+  i <-  index[i]
+  cpt_listings_in$beds[i] <-  cpt_listings_in$bedrooms[i]
+}
+```
+
+
+```{r}
+#REMOVE OBS WITH NA VALUES FOR BEDS AND BEDROOMS AND BATHS & HOST LISTINGS COUNT
+#cpt_listings_in[is.na(cpt_listings_in$bedrooms),useForCleaning]
+cpt_listings_in <- cpt_listings_in[complete.cases(cpt_listings_in$beds),]
+cpt_listings_in <- cpt_listings_in[complete.cases(cpt_listings_in$bedrooms),]
+```
+
+Importantly, we were also able to get ward level averages using `dplyr` package - we shall be using this data extensively throughout the project later on. 
+
+```{r}
+# WARD LEVEL AVERAGES
+wardLevelAverages <-  cpt_listings_in %>%
+  group_by(WARDNO) %>% 
+  dplyr::summarise(averageprice = mean(price_clean), 
+                   hsuperhostratio = mean(host_is_superhost_TRUE),  
+                   avertype_enthome = mean(`room_type_Entire home/apt`),
+                   avertype_Hotelroom = mean(`room_type_Hotel room`),
+                   avertype_Privateroom = mean(`room_type_Private room`),
+                   avertype_Sharedroom = mean(`room_type_Shared room`),
+                   aveaccommodates =  mean(accommodates),                 
+                   avebedrooms = mean(bedrooms),  avebeds = mean(beds),
+                   aveinsbook =  mean(instant_bookable_TRUE),
+                   avefbooked = mean(fullyBooked_TRUE),
+                   averevrate = mean(review_scores_rating),
+                   averevval = mean(review_scores_value),
+                   aveavail30 = mean(availability_30),
+                   aveminnight = mean(minimum_nights),
+                   averevloc = mean(review_scores_location),
+                   avefulbok = mean(fullyBooked_TRUE),
+                   avelats = mean(latitude),
+                   avelongitude = mean(longitude))
+```
+
+Finally, we decided to change some other variables to factors, this is shown below. 
+```{r, include=FALSE, message=FALSE}
+cpt_listings_in.2 <- cpt_listings_in[complete.cases(cpt_listings_in$bathrooms),]
+wardLevelAverages.2 <-  cpt_listings_in.2 %>%
+  group_by(WARDNO) %>% 
+  dplyr::summarise(averageprice = mean(price_clean), 
+                   hsuperhostratio = mean(host_is_superhost_TRUE),  
+                   avertype_enthome = mean(`room_type_Entire home/apt`),
+                   avertype_Hotelroom = mean(`room_type_Hotel room`),
+                   avertype_Privateroom = mean(`room_type_Private room`),
+                   avertype_Sharedroom = mean(`room_type_Shared room`),
+                   aveaccommodates =  mean(accommodates),                 
+                   avebedrooms = mean(bedrooms),  avebeds = mean(beds),
+                   aveinsbook =  mean(instant_bookable_TRUE),
+                   avefbooked = mean(fullyBooked_TRUE),
+                   averevrate = mean(review_scores_rating),
+                   averevval = mean(review_scores_value),
+                   aveavail30 = mean(availability_30),
+                   aveminnight = mean(minimum_nights),
+                   averevloc = mean(review_scores_location),
+                   avefulbok = mean(fullyBooked_TRUE),
+                   avelats = mean(latitude),
+                   avelongitude = mean(longitude))
+```
+
+```{r}
+#SUPER HOST TO FACTOR
+cpt_listings_in$host_is_superhost  <-  as.factor(cpt_listings_in$host_is_superhost)
+
+#INSTANT BOOK TO FACTOR
+cpt_listings_in$instant_bookable <-  as.factor(cpt_listings_in$instant_bookable)
+
+#FULLY BOOKED TO FACTOR
+cpt_listings_in$fullyBooked <-  as.factor(cpt_listings_in$fullyBooked)
+```
+
+This concludes the alterations and manipulation of the original data. The data cleaning ensures that the data is correct, consistent, and usable. As such, we can proceed with exploring our data set.
+
+***
+# Exploration of Data
+
+
+Data speak most clearly when they are organised. An important part of statistics, therefore, involves the analysis, organisation, presentation, and summary of data. A poor understanding of the features could cause us to make mistakes in the data analysis. poor understanding of the features could cause us to make mistakes in the data analysis and the modelling process. We will also try to reduce number of columns (or information) that are either contained elsewhere or do not carry useful information that can be used to perform our analysis. 
+
+
+We begin by exploring the location of the points; that is, by looking at how the listings are spread across and where they are positioned. The below plot simply displays all the listings in our data set with their respective geographic location.
+
+
+```{r}
+# PLOT OF POINTS
+plot_list <- c(30,31,75)
+plot_list <- cpt_listings_in[,plot_list]
+plot_list <- plot_list[complete.cases(plot_list),]
+plot_list$WARDNO <- as.factor(plot_list$WARDNO)
+ggplot(plot_list) +
+  aes(x = latitude, y = longitude) +
+  geom_point(shape = "circle", size = 1.7, colour = "#B22222") +
+  theme_minimal() + ylab("Longitude") + xlab("Latitude")
+
+```
+
+We see there are many listings spread across the City of Cape Town. It is quite noticeable that there appears to be fewer listings in the center and far right of the plot, compared to the bottom and top part of the map.
+
+Using the dummy variables that were generated, we can looking at the type of listings we have. The below pie chart indicates the proportion of the different types of properties in the city of Cape Town. 
+
+```{r}
+# TYPES OF LISTINGS - PROPERTY TYPE
+whole_property_types_counts <- table(cpt_listings_in$property_type)
+property_types_counts <- table(cpt_listings_in$property_type,exclude=names(whole_property_types_counts[whole_property_types_counts[] < 500]))
+count_of_others <- sum(as.vector(whole_property_types_counts[whole_property_types_counts[] < 200]))
+property_types_counts['Others'] <- count_of_others
+property_types <- names(property_types_counts)
+counts <- as.vector(property_types_counts)
+percentages <- scales::percent(round(counts/sum(counts), 2))
+property_types_percentages <- sprintf("%s (%s)", property_types, percentages)
+property_types_counts_df <- data.frame(group = property_types, value = counts)
+ggplot(property_types_counts_df, aes(x = "", y = value, fill = property_types_percentages))+
+  geom_bar(width = 1, stat = "identity")+
+  coord_polar("y", start = 0)+
+  scale_fill_brewer("Property Types", palette="Dark2")+
+  ylab("")+
+  xlab("")+
+  theme(axis.ticks = element_blank(), panel.grid = element_blank(), axis.text = element_blank(), plot.title = element_text(size = 0, face = "bold"),
+        legend.title=element_text(size=0),
+        legend.text=element_text(size=8), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(), legend.position="right")+
+  geom_text(aes(label = percentages), size = 4, position = position_stack(vjust = 0.5))
+
+```
+Most of the listings are entire rental units, which make up $55\%$. There are also a significant proportion of properties which are categorized as others. All rooms which appeared less than 500 times in the data, were classified as “others”. Some of these rooms included, a yurt, tent, tiny house and even a cabin, as well as other rooms which are popular like those available in a villa or guesthouse. Others make up $19\%$ and are an indication of the range property types available to the global community for their stay in Cape Town. We also note that, the second largest proportion of listings are entire residential homes at $5\%$.
+
+
+We explore the proportions of the different room types of all of listings available in our data set.
+
+```{r}
+# TYPES OF LISTINGS - Room Types
+room_types_counts <- table(cpt_listings_in$room_type)
+room_types <- names(room_types_counts)
+counts <- as.vector(room_types_counts)
+percentages <- scales::percent(round(counts/sum(counts), 2))
+room_types_percentages <- sprintf("%s (%s)", room_types, percentages)
+room_types_counts_df <- data.frame(group = room_types, value = counts)
+ggplot(room_types_counts_df) +
+  aes(x = group, weight = value) +
+  geom_bar(fill = "#C0771F") +
+  labs(x = "Room Type",
+       y = "Count") + theme(plot.title = element_text(size = 4, face = "bold"),
+                            legend.title=element_text(size=0),
+                            legend.text=element_text(size=12), panel.grid.major = element_blank(),
+                            panel.grid.minor = element_blank(),panel.background = element_blank(), 
+                            panel.border = element_blank())
+
+```
+
+A significant proportion of the rooms offered are entire home or apartments, and private rooms. Hotel rooms make up a small proportion of the listings. In fact, the  hotel rooms don’t represent more than $1\%$ of the entire listings. Given the proportions of room types, looking at the spread of price amongst them would be interesting.
+
+```{r}
+# PRICE WITH ROOM TYPE
+ggplot(data = cpt_listings_in, aes(x = room_type, y = price,color=room_type)) +geom_boxplot(outlier.shape = NA)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +coord_cartesian(ylim = c(0, 5550)) +xlab("room type")+
+  labs(color='Room Type')
+```
+We see that the largest median price is for entire apartments or homes, and closely behind that is hotel room types. Shared rooms have the lowest median price and smallest range, which is expected as it is uncommon to find (or charge) higher prices for such room, so the price bracket is expected to be constrained. Entire home or apartments and hotel rooms types are largely positively skewed. Entire home or apartments have the largest variation in price as well, compared to the other room types.
+
+We look at the behavior of price and the value recorded for the accommodates variables. This variable simply records the number of people the listing accommodates.
+
+```{r}
+# PRICE PER ACCOMODATES
+ggplot(data = cpt_listings_in, aes(x = as.factor(accommodates), y = price,color=accommodates)) +geom_jitter(position=position_jitter(0.3),size=0.9)+
+  theme(legend.position = "none" )+xlab("Accomodates") + ylab("Price")
+```
+We see a general trend, where as the number of people a property can accommodate increases, so does the general price charged. We note that the highest price charged is for a listing named “Obsidian”, which accommodates 10 people. Located atop the slopes of Clifton, near to Lion’s Head in Cape Town, Villa Obsidian is a described as a luxurious property comprised of five spacious bedrooms, accommodating up to 10 guests in style. Also described as a stunning split-level villa which is the latest offering from South African architect firm SAOTA and focuses on serenity and peace from the moment of arrival. More information about it can be found [here](https://www.myprivatevillas.com/luxury/africa/south-africa/cape-town/villa-obsidian/) or [here](https://luxuryescapes.capetown/villa/obsidian-clifton/). 
+
+We also try to see if price has any correlation to other variables in the data set provided, which detail a listings accommodation (like bedrooms and beds). The result is shown below in a correlation matrix.
+
+```{r}
+# CORR MATRIX AND PLOT WITH PRICE AND VARIABLES
+price_corr_apt <- c(32,35,36,38)
+price_corr_apt <- cpt_listings_in[,price_corr_apt]
+price_corr_apt <- price_corr_apt[complete.cases(price_corr_apt),]
+round(cor(price_corr_apt),2)
+```
+
+We see that there are no significant correlations between price and these variables. As expected, the number of people a listing accommodates is highly correlated to the number of bedrooms and beds a listing has. Another key aspect of the data set are the hosts, who sign up on the platform and offer their space to the world. Considering the rapid growth of Airbnb in South Africa, and the large number of listings in Cape Town alone, it is worth noting the growth of hosts; that is the evolution of new hosts over time.
+
+```{r}
+# GROWTH OF HOSTS
+new_hosts_data <- cpt_listings_in[complete.cases(cpt_listings_in$host_since),]
+new_hosts_data$host_since <- as.Date(new_hosts_data$host_since, '%Y-%m-%d')
+new_hosts_data <- new_hosts_data[new_hosts_data$host_since < as.Date("2017-01-01"),] ## Calculate the number of new hosts for each year (except for 2017 since our data is not complete for this year)
+new_hosts_data <- new_hosts_data[order(as.Date(new_hosts_data$host_since, format="%Y-%m-%d")),]
+new_hosts_data$host_since <- format(as.Date(new_hosts_data$host_since, "%Y-%m-%d"), format="%Y-%m")
+new_hosts_data_table <- table(new_hosts_data$host_since)
+date_plot = data.frame(date = as.Date(paste(format(names(new_hosts_data_table), format="%Y-%m"),"-01", sep="")), 
+                                      vec =as.vector(new_hosts_data_table)) 
+ggplot(date_plot) +
+ aes(x = date, y = vec) +
+ geom_line(size = 0.5, colour = "#112446") +
+ labs(x = "Date", 
+ y = "Number of New Hosts") +
+ theme_minimal()
+```
+We see that there was initially slow growth in hosts from 2010 to 2012. In the following years, the number of new hosts on the platform grew steadily till 2015. Between 2015 and 2016, there was a large jump in the number of host with listings in City of Cape Town. In the years that follow, it appears as though the number of new hosts has declined, after peaking in 2016.
+
+Reviews on Airbnb (and likewise on other e-platforms), play a significant role in marketing a certain listing and in general getting a listing to be successful. As such, it would be interesting to explore the average review for listings in each ward.
+
+
+```{r}
+#AVERAGE REVIEW RATING PER WARD
+ggplot(wardLevelAverages) +
+  aes(x = as.factor(WARDNO), y = averevrate) +
+  geom_point(shape = "circle", size = 1.5,
+             colour = "#440154") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) + xlab("Ward Number")+ylab("Average Review Rate")
+
+```
+We see that in general, there appears to be a high standard (rating) across all the wards, although some ratings do stand out amongst the rest, particularly for wards 18, 38, 51 and 75. These are the only wards which have achieved a review rating from tenants below 4.
+
+The `ward average` data set which we created, is the chosen data for the remainder of the project It contains average values for several variables, some of which we manually added to from the original code provided. Investigating the average price for listings in each ward, we achieve the result below:
+
+```{r}
+# PLOTS WITH WARD AVERAGES
+wardLevelAverages$WARDNO <- as.factor(wardLevelAverages$WARDNO)
+
+
+#AVERAGE PRICE IN EACH WARD
+ggplot(wardLevelAverages) +
+ aes(x = as.factor(WARDNO), weight = averageprice) +
+ geom_bar(fill = "#3E7227") +
+ labs(x = "Ward Number",
+ y = "Average Price", title = "") +
+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+We find that the average price for listings in the City of Cape Town can range dramatically across each ward. However, 48 (54%) of the wards have an average price per day of less than R1000. The lowest average price is recorded for ward 50 (R180), and the highest is for ward 54 (R5523). 
+
+```{r}
+ggplot(wardLevelAverages) +
+ aes(x = avelats, y = avelongitude, size = averageprice) +
+ geom_point(shape = "circle", 
+ colour = "#112446") + xlab("Latitude")+ylab("Longitude")+
+ theme_minimal()+guides(size=guide_legend(title="Average Price"))
+```
+
+This size of the point indicates the average price for listings in the respective wards. The location of the points (wards) were found by taking the mean of the latitude and longitudes of all the listings in a respective ward. We see that generally the wards at the bottom have higher average prices compared to those located in the middle and to the right.
+
+
+## Variable Selection
+
+Finally, we have a look at all the computed ward average variables, and assess their correlations with each other. We use this to infer which variables we can or should use in the forthcoming sections of the assignment. We know that when variables used in clustering are collinear - a high level of correlation between two variables - some variables get a higher weight than others in our clustering analysis. If two variables are perfectly correlated, they effectively represent the same concept. But that concept is now represented twice in the data and hence gets twice the weight of all the other variables. The final solution is likely to be skewed in the direction of that concept. In fact, when using euclidean distances, variables which are correlated will naturally influence object positioning in similar ways.
+
+Thus, if a large proportion of the variables in an analysis are strongly correlated, the influence of other variables may be poorly represented. To avoid this, we could perform factor analysis or PCA on the variables and, if it is successful, we can use the extracted factors as input for clustering algorithms. However for this implementation, we opted for using a correlation map and simply eliminating variables which appear to be strongly correlated.
+
+
+```{r}
+mydata <- wardLevelAverages[,2:17]
+
+cormat <- round(cor(mydata),4)
+
+
+melted_cormat <- melt(cormat)
+
+# Get lower triangle of the correlation matrix
+get_lower_tri<-function(cormat){
+  cormat[upper.tri(cormat)] <- NA
+  return(cormat)
+}
+# Get upper triangle of the correlation matrix
+get_upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)]<- NA
+  return(cormat)
+}
+
+upper_tri <- get_upper_tri(cormat)
+
+
+# Melt the correlation matrix
+library(reshape2)
+melted_cormat <- melt(cormat, na.rm = TRUE)
+
+# Heat map
+library(ggplot2)
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1))+
+  coord_fixed() +xlab("")+ylab("")
+```
+We see that accommodation, bedrooms and beds are all highly positively correlated with one another, which is expected. Similarly, the review scores exhibit the same associations. We also note that average private bedrooms appears to be strongly negatively correlated to average entire home variable. As such we decided to remove one of each these variables from our analysis to reduce the collinearity present in our data.
+
+
+Finally, a nice little side plot, which just simply shows the listings highlighted/colored by their wards.
+
+```{r}
+ggplot(plot_list) +
+  aes(x = latitude, y = longitude, colour = WARDNO) +
+  geom_point(
+    size = 1.5) +
+  scale_color_manual(values = c(`1` = "#F8766D", `2` = "#F47863", `3` = "#F17B59", `4` = "#EE7D4F",
+                                `5` = "#EA8045", `6` = "#E7823C", `7` = "#E48532", `8` = "#E08728", `9` = "#DD8A1E", `10` = "#DA8C14",
+                                `11` = "#D68F0B", `12` = "#D39101", `14` = "#CD9300", `15` = "#C89600", `16` = "#C29800", `17` = "#BC9A00",
+                                `18` = "#B69C00", `19` = "#B19E00", `20` = "#ABA000", `21` = "#A5A200", `22` = "#9FA500", `23` = "#9AA700",
+                                `25` = "#94A900", `26` = "#89AB03", `27` = "#7BAC08", `28` = "#6EAD0D", `29` = "#61AF12", `30` = "#54B017",
+                                `31` = "#47B21C", `32` = "#39B321", `38` = "#2CB527", `43` = "#1FB62C", `44` = "#12B831", `45` = "#04B936",
+                                `46` = "#00BA3D", `48` = "#00BB47", `49` = "#00BB50", `50` = "#00BC59", `51` = "#00BC62", `53` = "#00BD6C",
+                                `54` = "#00BE75", `55` = "#00BE7E", `56` = "#00BF87", `57` = "#00C091", `58` = "#00C09A", `59` = "#00C0A2",
+                                `60` = "#00BFA8", `61` = "#00BFAE", `62` = "#00BEB4", `63` = "#00BDBA", `64` = "#00BDC0", `65` = "#00BCC6",
+                                `66` = "#00BBCC", `67` = "#00BAD2", `68` = "#00BAD9", `69` = "#00B9DF", `70` = "#03B8E3", `71` = "#0BB5E6",
+                                `72` = "#14B2E8", `73` = "#1DB0EB", `74` = "#26ADEE", `75` = "#2EAAF0", `76` = "#37A8F3", `77` = "#40A5F5",
+                                `81` = "#49A3F8", `82` = "#51A0FA", `83` = "#5A9DFD", `84` = "#639BFE", `85` = "#6E97FE", `86` = "#7993FE",
+                                `91` = "#848FFD", `92` = "#8F8BFD", `93` = "#9A88FD", `94` = "#A584FC", `96` = "#B080FC", `100` = "#BB7CFC",
+                                `101` = "#C679FB", `102` = "#D175FB", `103` = "#DB71FA", `104` = "#DE70F5", `105` = "#E16EF0", `107` = "#E56DEB",
+                                `108` = "#E86BE6", `109` = "#EB6AE1", `110` = "#EE68DC", `111` = "#F267D7", `112` = "#F565D2", `113` = "#F864CD",
+                                `115` = "#FB62C8", `116` = "#FF61C3")) +
+  theme(legend.position = "none",  plot.title = element_text(size = 20, face = "bold"),
+        legend.title=element_text(size=20),
+        legend.text=element_text(size=16))
+```
+
+
+
+Our final chosen data-set for the clustering analysis that follows, is shown below. 
+
+
+| **Variable Name**    | **Variable Description**                                              |
+|----------------------|-----------------------------------------------------------------------|
+| _averageprice_       | Average daily price in local currency for listings in ward            |
+| _hsuperhostratio_    | The ratio of super hosts for the listings in the ward                 |
+| _averypeHotelroom_   | Average number of hotel room types for listings in ward               |
+| _avertypeSharedroom_ | Average number of shared room types for listings in ward              |
+| _aveavail30_         | The average availability of the listing 30 days in the future in ward |
+| _aveaccommodates_    | Average number of people the listings in ward accommodates            |
+| _aveinsbook_         | Average number of instant bookable listings in ward                   |
+| _aveminnight_        | Average minimum number of night stay for listings in ward             |
+| _avefbooked_         | Average number of fully booked listings in ward                       |
+| _averevrate_         | Average review score rating for listings in ward                      |
+
+
+***
+# Clustering Analysis
+
+Cluster analysis, aims to group a collection of objects into subsets or “clusters” such that those within each cluster are more closely related to one another than objects assigned to different clusters. More specifically, the goal is to partition the wards into groups (clusters) so that the pairwise dissimilarities between those assigned to the same cluster tend to be smaller than those in different clusters. Clustering is an unsupervised machine learning. It is used for knowledge discovery rather than prediction. It provides an insight into the natural groupings found within data. It is also used as a pre-processing step for other machine learning algorithms. In the following subsections we implement centroid clustering (a hierarchical) and K-means (non-hierarchical).
+
+```{r, include=FALSE}
+wardLevelAverages <- wardLevelAverages[,-c(19,20)] #REMOVE COORDINATE VARIABLES
+```
+
+```{r, include=FALSE}
+#NEW DATA SET FOR FOLLOWING QUESTIONS
+df <- as.data.frame(wardLevelAverages)
+rownames(df) <- df$WARDNO
+df <- df[,c(2,3,8,11,12,13,16)]
+glimpse(df)
+```
+
+## Non-Hierarchical Clustering
+
+Non Hierarchical Clustering (NHC) involves formation of new clusters by merging or splitting the clusters. In contrast to hierarchical clustering, it does not follow a tree like structure. This technique groups the data in order to maximize or minimize some evaluation criteria. Examples of non-hierarchical clustering methods include K-means and K-medoids. We chose to use K-means for this project. 
+
+The clustering method aims to assign objects to a user-defined number of clusters (k) in such a way that maximizes the separation of those clusters while minimizing intra-cluster distances relative to the cluster’s mean. The algorithm for k-means can be briefly summarized as below:
+
+1. Specify the number of clusters ($k$) to be created
+
+2. Select randomly $k$ objects from the data set as the initial cluster centers or means
+
+3. Assigns each observation to their closest centroid, based on the Euclidean distance between the object and the centroid
+
+4. For each of the $k$ clusters update the cluster centroid by calculating the new mean values of all the data points in the cluster. The centroid of a $k$th cluster is a vector of length $p$ containing the means of all variables for the observations in the $k$th cluster; $p$ is the number of variables.
+
+5. Iteratively minimize the total within sum of square. That is, iterate steps 3 and 4 until the cluster assignments stop changing or the maximum number of iterations is reached.
+
+
+We begin by calculating descriptive statistics for our data set we shall use.
+
+
+```{r}
+# DESCRIPTIVE STATS TO SEE IF SCALING NEEDED
+desc_stats <- data.frame(
+Min = apply(df[,1:ncol(df)], 2, min), # minimum
+Med = apply(df[,1:ncol(df)], 2, median), # median
+Mean = apply(df[,1:ncol(df)], 2, mean), # mean
+SD = apply(df[,1:ncol(df)], 2, sd), # Standard deviation
+Max = apply(df[,1:ncol(df)], 2, max) # Maximum
+)
+
+(desc_stats <- round(desc_stats, 2))
+
+```
+We see that the variables have large different means and variances. If we proceeded with the data as follows, the range of values in each variable will act as a weight when determining how to cluster data. Standardization prevents variables with larger scales from dominating how clusters are defined. It allows all variables to be considered by the algorithm with equal importance. As such, we standardize our data using the `scale()` function in R. 
+
+
+```{r}
+df <- scale(df)
+```
+
+A pitfall of NHC is that we need to pre-specify the number of clusters to use. We opted for using the silhouette method for determining number $k$. Average silhouette method measures the quality of a clustering and determines how well each object lies within its cluster. A high average silhouette width indicates a good clustering. The average silhouette method computes the average silhouette of observations for different values of $k$. The optimal number of clusters $k$ is the one that maximizes the average silhouette over a range of possible values for $k$. So a high average silhouette indicates good clustering. We plot the average silhouette to the number of clusters to find the maximum point.
+
+
+```{r}
+set.seed(123)
+fviz_nbclust(df, kmeans, method = "silhouette", k.max = 20)+labs(title= "") #6 CLUSTERS
+
+```
+
+From the silhouette method, we are inclined to use 11 clusters for our K-means. With our k set to 8, we implemented the K-means algorithm using the `kmeans()` function in R. The algorithm typically defaults to euclidean distances, however, alternate criteria, such as Manhattan distances can also be used. We opted to use euclidean distance for this project. 
+
+```{r}
+set.seed(123)
+km.out <- kmeans(df, 8, nstart = 25)
+km.out
+```
+
+The within-cluster sum of squares is a measure of the variability of the observations within each cluster. The size, reflects the number of points in each cluster. By taking the between cluster sum of squares and dividing it by the total sum of squares, we achieve $71.4\%$. The $ 71.4\%$ is a measure of the total variance in our data set that is explained by the clustering. As mentioned earlier, K-means minimize the within group dispersion and maximize the between-group dispersion. By assigning the samples to $k$ (11) clusters rather than $n$ (89 - number of samples) clusters achieved a reduction in sums of squares of $71.4\%$.
+
+```{r}
+fviz_cluster(km.out, data = df)+theme( axis.text = element_blank(), plot.title = element_text(size = 2, face = "bold"),
+    legend.title=element_text(size=16),
+    legend.text=element_text(size=12), legend.position="right")+labs(title= "") 
+```
+
+
+We can see the clusters 1, 2 and 7, which have only have one point (ward) in them. Otherwise we see the other 5 clusters with somewhat very minimal overlap.  Now, we can inspect the clusters. This can be done by using the silhouette method. A plot of the average silhouette width for each cluster is given below.
+
+```{r}
+# Visualize silhouette information
+NHC_sil<-  silhouette(km.out$cluster, dist(df))
+fviz_silhouette(NHC_sil) #8 CLUSTERS
+```
+The silhouette value is a measure of how similar an object is to its own cluster (cohesion) compared to other clusters (separation). The silhouette ranges from −1 to +1, where a high value indicates that the object is well matched to its own cluster and poorly matched to neighbouring clusters. In the plot, our average silhouette width is 0.29. This indicates that the the structure is weak and could be artificial. We see that in clusters, 3,4,5,6 an 8, many points have above the mean silhouette value. For cluster 4, there are some negative values, which suggests that some points are not well matched in its own cluster and that the clustering configuration may have too many or too few clusters. Clusters 1, 2 and 7, have very small silhouette width. These clusters had only one ward (object) in them.
+
+The cluster means are provided below. 
+
+```{r}
+# CLUSTER ANALYSIS
+clust_means <- aggregate(df,by=list(km.out$cluster),FUN=mean)
+datatable(round(clust_means,2))
+```
+
+And the number of observations (listings) in each cluster are given here.
+
+```{r}
+table(km.out$cluster)
+```
+
+We can also examine the cluster profiling, that is the impact of the variables had for determining clusters.
+
+
+```{r}
+
+clusvec <- km.out$cluster
+class.means <- apply(df, 2, function(x) tapply (x, clusvec, mean))
+
+#PLOTTING CLASS MEANS AND CLUSTER PROFILE
+df.plot = c()
+for (i in 1:8){ #1:NumOfClusters
+  df.plot =rbind(df.plot, class.means[i,])
+}
+
+df.plot  = t(df.plot)
+df.plot = as.data.frame(df.plot)
+
+
+g1 = ggplot(data = df.plot, aes(x = 1:7))+
+  geom_line(aes(y=V1, colour = "1")) +
+  geom_line(aes(y = V6, color="6"), linetype="solid")+
+  geom_line(aes(y = V5, color="5"), linetype="solid")+
+  geom_line(aes(y = V4, color="4"), linetype="solid")+
+  geom_line(aes(y = V3, color="3"), linetype="solid")+
+  geom_line(aes(y = V2, color="2"), linetype="solid")+
+  geom_line(aes(y = V7, color="7"), linetype="solid")+
+  geom_line(aes(y = V8, color="8"), linetype="solid")+
+  scale_colour_manual("Clusters",
+                      values = c("1"="#FF69B4", "6"="steelblue", 
+                                 "5"="chartreuse", "4" = "cyan", 
+                                 "3" = "darkorchid", 
+                                 "2" = "brown1", "7" = "darkorange1",  
+                                 "8" = "darkgoldenrod1")) +
+  theme(axis.text.x = element_text(angle = 45, vjust =0.6)) +
+  ylim(-7.5, 9)+ ylab("Class Means")+
+  scale_x_continuous("Variables", labels = c("averageprice","hsuperhostratio",
+                                             "aveaccommodates","aveinsbook",
+                                             "avefbooked","averevrate",
+                                             "aveminnight"), breaks = 1:7)
+g1
+```
+
+Larger gap between lines in the plot for a respective variable, indicates that this specific variable has a more significant role in determining the cluster. Similarly, where the lines are close or meet, indicate that the variable does not play a role in the clustering. We notice that several variables have large roles in determining different clusters. Particularly, `aveinsbooked`, has a relatively large role in some of the 8 clusters. The variable `aveaccomodates` plays a large role in determining cluster 1 from the rest, similarly `avefbooked` has a big role in determining cluster 2 from the other clusters.
+
+### Summary of K-Means
+
+K-means is simple, straightforward algorithm that relatively easy to implement, however, there are certain challenges with K-means. It always tries to make clusters of the same size. Also, we have to decide the number of clusters at the beginning of the algorithm. Ideally, we would not know how many clusters should we have, in the beginning of the algorithm and hence it a challenge with K-means.
+One advantage of this method is that we do not have to calculate the distance measures between all pairs of subjects. Therefore, this procedure seems much more efficient or practical when you have very large data sets. However, the results of applying K-means clustering algorithms depend on the choice for the number of clusters to be searched and a starting configuration assignment. In contrast, hierarchical clustering methods do not require such specifications. Instead, they require the user to specify a measure of dissimilarity between (disjoint) groups of observations, based on the pairwise dissimilarities among the observations in the two groups.
+
+We found a relative decent clustering result with K-means. We achieved an average silhouette width of 0.29 with 8 clusters. Let's now review and apply Hierarchical clustering method. 
+
+## Hierarchical Clustering
+
+Hierarchical clustering (HC) is an unsupervised clustering technique that groups similar objects into groups called clusters, done in a predefined order. The endpoint is a set of clusters, where each cluster is distinct from each other cluster, and the objects within each cluster are broadly like each other. It can be further divided into two types namely agglomerative hierarchical clustering and divisive hierarchical clustering. **Divisive HC** entails starting with $n$ clusters (in case of n observations), we start with a single cluster and assign all the points to that cluster. Then at each iteration, we split the farthest point in the cluster and repeat this process until each cluster only contains a single point. **Agglomerative HC**, follows an opposite approach. we define each data point as a cluster and combine existing clusters at each iteration. There exists several different methods for this approach. With that, for hierarchical clustering, we need to be concerned about: *What dissimilarity measure should be used and what type of linkage should be used*? Also, *where should we cut the dendrogram in order to obtain clusters*?
+
+We opted for using euclidean dissimilarity measure. There are several types of linkage methods. In this assignment we were concerned with **single**, **complete** and **centroid linkage**.
+
+### Single, Complete and Centroid Linkage
+
+In *single linkage*, we define the distance between two clusters as the minimum distance between any single data point in the first cluster and any single data point in the second cluster. At each stage of the process we combine the two clusters with the smallest single linkage distance. *Complete linkage* differs from single, in that we define the distance between two clusters to be the maximum distance between any single data point in the first cluster and any single data point in the second cluster. So at each stage of the process we combine the two clusters that have the smallest complete linkage distance. The final linkage method – centroid – defines distance between two clusters as the distance between the two mean vectors of the clusters. So at each stage of the process we combine the two clusters that have the smallest centroid distance. 
+
+
+### Dendrogram
+
+To get the number of clusters for hierarchical clustering, we make use of a Dendrogram. A dendrogram, simply is a diagram that shows the hierarchical relationship between objects. It provides a highly interpretable complete description of the hierarchical clustering in a graphical format. The number of clusters will be the number of vertical lines which are being intersected by the line drawn using the threshold.
+
+### Cophenetic Correlation
+
+The extent to which the hierarchical structure produced by a dendrogram actually represents the data itself can be judged by the cophenetic correlation coefficient. More specifically, the cophenetic correlation is a measure of how faithfully a dendrogram preserves the pairwise distances between the original un-modeled data points. If the value is high (near 1) the clustering result is an excellent representation of the original distances, and vice-versa. We used this measure to compare our single, complete and centroid linkage methods.
+
+
+### Application
+
+Let's start by applying the linkage methods and deciding which one we shall use for the hierarchical clustering. 
+
+```{r}
+#Compute pairwise distance matrices
+dist.out <- dist(df, method = "euclidean")
+```
+
+```{r}
+#SINGLE LINKAGE USING EUCLIDEAN
+single <- hclust(daisy(df,metric="euclidean"),method="single")
+
+#CENTROID LINKAGE
+cent <- hclust(daisy(df,metric="euclidean"),method="centroid")
+
+#COMPLETE LINKAGE
+comp <- hclust(dist.out, method = "complete")
+```
+
+Now, let's use cophenetic correlation to assess how faithfully a dendrogram preserves the pairwise distances between the original un-modeled data points. In this way we can determine the correct linkage to use (or most suitable linkage). 
+
+```{r}
+c1 = cor(daisy(df,metric="euclidean"), cophenetic(single))
+c2 = cor(daisy(df,metric="euclidean"), cophenetic(comp))
+c3 = cor(daisy(df,metric="euclidean"), cophenetic(cent))
+
+data.frame("Single" = c1, "Complete" = c2, "Centroid" = c3)
+
+```
+
+As such, we opted for the *centroid* linkage method for our hierarchical clustering. Now, we need to decide where to cut the tree, to obtain our clusters. Similar to how we determined optimal clusters with k-means clustering, we can execute similar approaches for hierarchical clustering. The below plot is the average silhouette method:
+
+```{r}
+#RUN HCLUST
+centroid <- hclust(daisy(df,metric="euclidean"),method="centroid")
+
+#NUMBER CLUSTERS
+fviz_nbclust(df, FUN = hcut, method = "silhouette") + labs(title = "")
+```
+
+The plot above indicates that we should use 9 clusters. As such, cut the tree to obtain 9 clusters. The dendrogram and resulting clusters are illustrated below:
+
+```{r, warning=FALSE, message=FALSE, fig.width=10}
+#DENDROGRAM
+res.hc <- hclust(dist(df), method = "centroid")
+res.hc$height <- sort(res.hc$height)
+fviz_dend(res.hc, 
+          palette = "jco", 
+          rect = TRUE, rect_fill = TRUE, 
+          rect_border = "jco", k = 9, color_labels_by_k = T)+labs(title="")
+```
+The different rectangles (and shades) indicate the different clusters. There are 9 clusters here. The labeled terminal nodes of the tree, are the wards and if the rectangle they fall in indicates the cluster they belong to. Immediately we can see that there is a large cluster with majority of wards, and the other clusters have much fewer wards. Our results from hierarchical clustering, using the centroid linkage method, can be visualized in the plot below
+
+```{r}
+# Visualize Clusters
+centroid <- cutree(centroid, k=9) #7
+fviz_cluster(list(data = df, cluster = centroid))+labs(title = "")
+```
+
+Similar to what we did in NHC subsection (previous subsection), we can assess the clustering and quality using the
+`silhouette()` function in R.
+
+
+
+```{r}
+# Visualize silhouette information
+hc_sil<-  silhouette(centroid, dist(df))
+fviz_silhouette(hc_sil) +ylab("Silhouette Width")#+labs(title = "")
+
+
+```
+
+Our average silhouette width is 0.31. We see that two clusters achieve a higher silhouette width than the mean (0.31) - clusters 1 and 9. However, we see that cluster 1 also contains negative values for silhouette, suggesting some points may not match well in their current cluster. The clusters 2,3,4,5,6,7 and 8 have very small silhouette values. These clusters each contained only one object (ward). We also, note that with the relatively low silhouette average width, structure is weak and could be artificial.
+
+
+We now plot the class means for the variables used, and observe the influence of variables in determining clusters.
+
+```{r}
+#CLASS MEANS PLOT
+clusvec <- centroid
+class.means <- apply(df, 2, function(x) tapply (x, clusvec, mean))
+
+#PLOTTING CLASS MEANS AND CLUSTER PROFILE
+df.plot = c()
+for (i in 1:9){ #1:NumOfClusters
+  df.plot =rbind(df.plot, class.means[i,])
+}
+
+df.plot  = t(df.plot)
+df.plot = as.data.frame(df.plot)
+df.plot = cbind(df.plot, index = as.factor(1:7))
+
+g2 <- ggplot(data = df.plot, aes(x = 1:7))+
+ geom_line(aes(y=V1, colour = "1")) +
+  geom_line(aes(y = V6, color="6"), linetype="solid")+
+  geom_line(aes(y = V5, color="5"), linetype="solid")+
+  geom_line(aes(y = V4, color="4"), linetype="solid")+
+  geom_line(aes(y = V3, color="3"), linetype="solid")+
+  geom_line(aes(y = V2, color="2"), linetype="solid")+
+  geom_line(aes(y = V7, color="7"), linetype="solid")+
+  geom_line(aes(y = V8, color="8"), linetype="solid")+
+  geom_line(aes(y = V9, color="9"), linetype="solid")+
+  scale_colour_manual("Clusters",
+                      values = c("1"="#FF69B4", "6"="steelblue", 
+                                 "5"="chartreuse", "4" = "cyan", 
+                                 "3" = "darkorchid", 
+                                 "2" = "brown1", "7" = "darkorange1",  
+                                 "8" = "darkgoldenrod1", "9"="darkred")) +
+  theme(axis.text.x = element_text(angle = 45, vjust =0.6)) +
+  ylim(-7.5, 9)+ ylab("Class Means")+
+  scale_x_continuous("Variables", labels = c("averageprice","hsuperhostratio",
+                                             "aveaccommodates","aveinsbook",
+                                             "avefbooked","averevrate",
+                                             "aveminnight"), breaks = 1:7) 
+g2
+
+```
+
+We notice that several variables have significant roles in determining different clusters. For example, accommodates variable (`aveaccomodates`), has a large effect in determining cluster 8, whereas it looks to play small role in determining the other clusters. Similarly, fully booked variable (`avefbooked`), plays a large role determining cluster 5 and differentiating it.
+
+# Summary of Clustering Algorithms
+
+Hierarchical Clustering involves creating clusters in a predefined order from top to bottom, whereas non hierarchical clustering involves formation of new clusters by merging or splitting the clusters instead of following a hierarchical order. Computationally, HC It is considered slower than NHC. A benefit of HC is that it is comparatively easier to read and understand, whereas in NHC the clusters can be difficult.
+Our empirical analysis suggested that HC with centroid linkage method, resulted in the best clustering. Moreover, comparing the cluster profiles from NHC and HC, we see variables play different roles in determining clusters for each method. Shown below.
+
+```{r, fig.width=10}
+g1 <- g1 + ggtitle("K-Means Clustering")
+g2 <- g2 + ggtitle("Hierarchical Clustering")
+ggarrange(g1, g2, nrow = 2)
+```
+
+
+HC resulted in a higher average silhouette width, 0.31 compared to NHC achieving 0.29 with K-mean algorithm. We notice that both results suggest weak fits, but HC was slightly better than NHC, with the clustering structure.
+
+
+***
+# Self Organising Maps
+
+We apply self-organising maps, and achieve clusters from which we shall compare to the clusters obtained in previous section on Clustering Analysis. **Self Organising Maps (SOMs)** provides a data visualisation technique which helps to understand high dimensional data by reducing the dimensions of data to a map, whereby it is also seen as a clustering concept as it groups similar data together. So SOMs can be seen as a technique which reduces data dimensions and displays similarities among data.
+
+The algorithm to produce a SOM from our data set can be summarised as follows:
+
+1. Select the size and type of the map. The shape can be hexagonal or square, depending on the shape of the nodes your require. Typically, hexagonal grids are preferred since each node then has 6 immediate neighbours.
+
+2. Initialise all node weight vectors randomly.
+
+3. Choose a random data point from training data and present it to the SOM.
+
+4. Find the “Best Matching Unit” (BMU) in the map – the most similar node. Similarity is calculated using the Euclidean distance formula.
+
+5. Determine the nodes within the “neighbourhood” of the BMU. The size of the neighbourhood decreases with each iteration.
+
+6. Adjust weights of nodes in the BMU neighbourhood towards the chosen data point. The learning rate decreases with each iteration. The magnitude of the adjustment is proportional to the proximity of the node to the BMU.
+
+7. Repeat Steps 2-5 for $N$ iterations or convergence.
+
+Getting the Best Matching Unit is done by running through all wright vectors and calculating the distance from each weight to the sample vector. The weight with the shortest distance is the winner. There are numerous ways to determine the distance, however, the most commonly used method is the euclidean distance.
+We will use the `kohonen` R package for SOMs. We also use the same data set used in the previous section (Clustering Analysis), so we can compare our results across sections. Similar to our clustering analysis, we begin by centering and scaling our data to give them equal importance during the SOM training process. For SOMs, we are required to change the data frame with training data to a matrix.
+
+```{r, message=FALSE, warning=FALSE}
+
+# PACKAGES
+library(kohonen)
+data_matrix=as.matrix(df)
+```
+
+
+We will create a 4x4 hexagonal grid. The performance of the SOM algorithm depends on the learning rate $\alpha$. The $\alpha$ learning rate, is a vector of two numbers indicating the amount of change. Default is to decline linearly from 0.05 to 0.01 over `rlen` updates where `rlen` is the number of times the complete data set will be presented to the network, i.e. number of iterations. As the SOM training iterations progress, the distance from each node’s weights to the samples represented by that node is reduced. Ideally, this distance should reach a minimum plateau. This plot option shows the progress over time. If the curve is continually decreasing, more iterations are required.
+
+```{r}
+#TRAINING AND FIT
+som_grid <- somgrid(xdim = 4, ydim=4, topo="hexagonal")
+set.seed(123)
+som_model <- som(data_matrix,grid=som_grid,
+                 rlen=5000,
+                 alpha=c(0.05,0.01),
+                 keep.data = TRUE
+                 )
+
+change.df <- as.data.frame(som_model$changes)
+change.df <- cbind(change.df, x = c(1:5000))
+
+#TRAINING CHANGES
+ggplot(change.df) +
+ aes(x = x, y = V1) +
+ geom_line(size = 0.5, colour = "#112446") +
+ theme_minimal()  +xlab("Iteration") +ylab("Mean Distance to Closest Unit") + labs(title = "")
+
+```
+We see that our curve has reached a minimum plateau much earlier than the indicated number of iterations used. No more iterations are required, in fact we can decrease the number of iterations, to say, 4000.
+
+The `Kohonen` packages allows us to visualise the count of how many samples are mapped to each node on the map. This metric can be used as a measure of map quality - ideally the sample distribution is relatively uniform. Large values in some map areas suggests that a larger map would be beneficial. Empty nodes indicate that your map size is too big for the number of samples.
+
+```{r}
+plot(som_model, type="counts")
+```
+
+Here, the lighter colour areas represent nodes with more observations mapped onto them. Darker colours (red) represent nodes with higher numbers of represented observations. We see that the bottom nodes all have very few observations (wards) mapped onto them. While there are two nodes in the middle layers, which have more than 15 wards mapped onto them.
+
+The neighbour distances represent natural cluster formations. It is useful to examine the distances of each node where high distances (lighter areas) are the nodes that are very different than its surrounding nodes.
+
+```{r}
+plot(som_model, type="dist.neighbours")
+```
+In our neighbour distance plot, we see that Node 3 has a large distance to its surrounding neighbours. Similarly, node 15 also has a relatively large distance to its surrounding neighbours. 
+
+Now looking at the codes plot. The node weight vectors, or “codes”, are made up of normalised values of the original variables used to generate the SOM. Each node’s weight vector is representative (or similar) of the samples mapped to that node. By visualising the weight vectors across the map, we can see patterns in the distribution of samples and variables. Code vectors are provided as a fan-type plot, where each fan is representing a variable that was used for SOM. The dimensions of the fan is simply the representation of the average variable per node calculated by the observations variable values that are mapped onto that node. A node with a big fan pie shows that observations with high values of that variable are mapped onto that node.
+
+```{r, warning=FALSE, message=FALSE}
+plot(som_model, type="codes")
+```
+
+For example, the fourth node has wards with very low average prices, high super host ratios, indicating that the wards mapped onto this node 4 are very low compared to others. Similarly, node 17 has wards with very high average price for listings.
+
+We can also examine the distribution of each and every individual variable among the grid nodes. A SOM heat map allows the visualisation of the distribution of a single variable across the map. Visualization of different maps allows one to explore the relationship between the input variables.
+
+```{r}
+codes=som_model$codes[[1]]
+df.name <- colnames(df)
+
+par(mfrow=c(2,4))
+for(i in 1:7){
+plot(som_model, type = "property", property = codes[,i], main=df.name[i])}
+
+```
+
+It should be noted that this default visualisation plots the normalised version of the variable of interest. Looking at the plot for variables, average type hotel room, average type shared room, average fully. booked and average min night stay, there are only one node in each of these plots which include wards with high levels for the respective variable. All the other nodes are relatively much lower and hence a darker colour. For average review score rating, we see that node 14, contains wards with much lower scores than the others.
+
+Clustering can be performed on the SOM nodes to isolate groups of samples with similar metrics. After creating the codes vectors, which is simply the average of all the listings that are mapped onto the same node, one can apply a cluster analysis using these averages to cluster the 16 nodes. An estimate of the number of clusters that would be suitable can be ascertained using a K-means algorithm and examining for an “elbow-point” in the plot of within cluster sum of squares. First we can examine the elbow plot to determine the number of clusters we might generate using the nodes.
+
+```{r}
+data <- som_model$codes[[1]]
+wss <- (nrow(data)-1)*sum(apply(data,2,var))
+for (i in 1:ncol(df)) {
+  wss[i] <- sum(kmeans(data, centers=i)$withinss)
+}
+wss.plot <- data.frame("wss" = wss, "index" = as.factor(1:7))
+
+# DETERMINE CLUSTERS
+ggplot(wss.plot) +
+ aes(x = 1:7, y = wss) +
+ geom_point(shape = "circle open", size = 1.5, colour = "#112446") +
+ theme_minimal() + geom_line(aes(y=wss),  linetype = "solid") + xlab("Index") +ylab("WSS") + 
+  scale_x_continuous(breaks = 1:10)
+
+```
+
+We shall use, suppose, 4 clusters. 
+
+```{r}
+# Plot Nodes and Clusters
+som_cluster <- cutree(hclust(dist(som_model$codes[[1]])), 4)
+
+pretty_palette <- c("#1f77b4", '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2')
+
+plot(som_model, type="mapping", labels=rownames(df), 
+     bgcol = pretty_palette[som_cluster], cex=.8)
+
+som.hc <- cutree(hclust(dist(som_model$codes[[1]])), 4)
+add.cluster.boundaries(som_model, som.hc)
+
+```
+
+The above plot shows the SOMs mapping, with 4 clusters. We have 3 clusters, which have 1 ward each - namely wards 45 and 28 and 22. This result is similar to what we obtained in HC with centroid linkage (see cluster visualisation of HC). In HC we had 9 clusters, however, ward 45 was also in a cluster by itself. In HC ward 22 was also in a cluster by itself, however from our SOMs mapping, we see that ward 22 is part of the larger cluster, although it is the only ward on its node.
+
+## Summary of SOMs
+
+Self-Organising Maps (SOMs) are another powerful tool to have in your data science repertoire. Advantages include: 
+
+- Intuitive method to develop customer segmentation profiles.
+
+- Relatively simple algorithm, easy to explain results
+
+- New data points can be mapped to trained model for predictive purposes.
+
+Disadvantages include, can be the lack of parallelisation capabilities for very large data sets since the training data set is iterative. Also SOM training requires clean, numeric data which can be hard to get.
+
+
+# References
+
+Murtagh, F. and Contreras, P., 2012. Algorithms for hierarchical clustering: an overview. Wiley Interdisciplinary Reviews: Data Mining and Knowledge Discovery, 2(1), pp.86-97.
+
+Nielsen, F., 2016. Hierarchical clustering. In Introduction to HPC with MPI for Data Science (pp. 195-211). Springer, Cham.
+
+Kohonen, T., 1990. The self-organizing map. Proceedings of the IEEE, 78(9), pp.1464-1480.
+
+Kohonen, T., 2013. Essentials of the self-organizing map. Neural networks, 37, pp.52-65.
+
+Visser, G., Erasmus, I. and Miller, M., 2017. Airbnb: The emergence of a new accommodation type in Cape Town, South Africa. Tourism Review International, 21(2), pp.151-168.
